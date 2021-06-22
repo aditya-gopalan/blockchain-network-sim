@@ -24,11 +24,14 @@ class Block_Propagation_Simulator:
 
     self.cycles = 0
     self.num_active_blocks_integral = 0.
+    self.num_active_blocks_list = []
     self.num_missing_block_copies_integral = 0.
+    self.age_of_information = 0
 
     # state-based parameters
     self.block_array = np.zeros((0, self.N))
     self.block_sources = np.zeros((0, self.N))
+    self.block_times = []
 
     self.consistent = True
  
@@ -60,7 +63,9 @@ class Block_Propagation_Simulator:
     return [self.time, self.num_active_blocks_integral, 
             self.num_missing_block_copies_integral,
             np.mean(self.cycle_lengths),
-            np.mean(self.blocks_per_cycle)]
+            np.mean(self.blocks_per_cycle),
+            self.age_of_information,
+            self.num_active_blocks_list]
 
 
   # compute a single arrival or transmission event
@@ -103,7 +108,7 @@ class Block_Propagation_Simulator:
       self.time += self.dt
 
     # compute running system statistics (using the new dt and the old state)
-    self.__compute_running_stats()
+    self.__compute_running_stats(arrival)
 
     # arrival
     if arrival:
@@ -112,6 +117,7 @@ class Block_Propagation_Simulator:
       self.block_array[-1, new_block_source] = 1
       self.block_sources = np.append(self.block_sources, np.zeros((1, self.N)), 0)
       self.block_sources[-1, new_block_source] = 1
+      self.block_times = np.append(self.block_times, self.time)
       return
     # transmission
     else:
@@ -158,6 +164,7 @@ class Block_Propagation_Simulator:
         if np.all(self.block_array[index, :] == 1):
           self.block_array = np.delete(self.block_array, index, 0)
           self.block_sources = np.delete(self.block_sources, index, 0)
+          self.block_times = np.delete(self.block_times, index, 0)
         else:
           index += 1
 
@@ -168,29 +175,31 @@ class Block_Propagation_Simulator:
   #   hybrid: send the oldest block for which the sending peer is the source.
   #           if no such block exists, send the oldest block which can be sent
   def __get_block_to_send(self, sendable_blocks, sending_peer):
-    if self.policy == 'causal':
+    if self.policy == 'oldest-first':
       return sendable_blocks[0]
-    else:
+    elif self.policy == 'random':
+      idx = random.randint(len(sendable_blocks))
+      return sendable_blocks[idx]
+    else: # self.policy == 'opportunistic'
       sending_peer_source_blocks = [block for block in sendable_blocks if \
                                     self.block_sources[block, sending_peer] == 1]
-      if self.policy == 'selfish':
-        if len(sending_peer_source_blocks) > 0:
-          return sending_peer_source_blocks[0]
-        else:
-          return None
-      elif self.policy == 'hybrid':
-        if len(sending_peer_source_blocks) > 0:
-          return sending_peer_source_blocks[0]
-        else: 
-          # if there are no source blocks to send
-          return sendable_blocks[0]
+      if len(sending_peer_source_blocks) > 0:
+        return sending_peer_source_blocks[0]
+      else: 
+        # if there are no source blocks to send
+        return sendable_blocks[0]
 
 
   # compute the running statistics
-  def __compute_running_stats(self):
+  def __compute_running_stats(self, arrival):
     self.num_active_blocks_integral += self.dt * self.block_array.shape[0]
+    if arrival:
+      self.num_active_blocks_list.append(self.block_array.shape[0])
     self.num_missing_block_copies_integral += self.dt * \
                                   (self.block_array.shape[0] * self.block_array.shape[1] - np.sum(self.block_array))
+    if len(self.block_times) > 0:
+      self.age_of_information += self.dt * (self.time - self.block_times[0])
+      # if not, we are consistent so we can add zero to the running tally
  
   # compute the final statistics 
   def compute_final_stats(self):
@@ -198,3 +207,4 @@ class Block_Propagation_Simulator:
     print('Mean number of missing block copies: ' + str(self.num_missing_block_copies_integral/self.time))
     print('Mean cycle length: ' + str(np.mean(self.cycle_lengths)))
     print('Mean blocks per cycle: ' + str(np.mean(self.blocks_per_cycle)))
+    print('Mean Age of Information: ' + str(self.age_of_information/self.time))
